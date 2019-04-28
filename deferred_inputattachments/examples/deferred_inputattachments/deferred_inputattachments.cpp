@@ -132,7 +132,7 @@ public:
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
-		title = "Deferred shading (2016 by Sascha Willems)";
+		title = "Deferred shading (Using Input Attachments)";
 		camera.type = Camera::CameraType::firstperson;
 		camera.movementSpeed = 5.0f;
 #ifndef __ANDROID__
@@ -246,8 +246,8 @@ public:
 		VkImageCreateInfo image = vks::initializers::imageCreateInfo();
 		image.imageType = VK_IMAGE_TYPE_2D;
 		image.format = format;
-		image.extent.width = width;
-		image.extent.height = height;
+		image.extent.width = FB_DIM;
+		image.extent.height = FB_DIM;
 		image.extent.depth = 1;
 		image.mipLevels = 1;
 		image.arrayLayers = 1;
@@ -264,7 +264,7 @@ public:
 		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &attachment->mem));
 		VK_CHECK_RESULT(vkBindImageMemory(device, attachment->image, attachment->mem, 0));
-		
+
 		VkImageViewCreateInfo imageView = vks::initializers::imageViewCreateInfo();
 		imageView.viewType = VK_IMAGE_VIEW_TYPE_2D;
 		imageView.format = format;
@@ -378,7 +378,7 @@ public:
 		attachmentDescs[4].format = attachments[0].depth.format;
 
 		std::vector<VkAttachmentReference> colorReferences;
-	
+
  		colorReferences.push_back({ 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 		colorReferences.push_back({ 2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
 		colorReferences.push_back({ 3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
@@ -442,7 +442,7 @@ public:
 		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT; //use VK_ACCESS_INPUT_ATTACHMENT_READ_BIT will decrease performance however.
 		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
 		dependencies[2].srcSubpass = 0;
@@ -461,9 +461,9 @@ public:
 		renderPassInfo.pSubpasses = subpassDescriptions.data();
 		renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
 		renderPassInfo.pDependencies = dependencies.data();
-	
+
 		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass));
-	
+
 
 		// Create sampler to sample from the color attachments
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
@@ -515,16 +515,6 @@ public:
 		textures.model.normalMap.loadFromFile(getAssetPath() + "models/armor/normal" + texFormatSuffix + ".ktx", texFormat, vulkanDevice, queue);
 		textures.floor.colorMap.loadFromFile(getAssetPath() + "textures/stonefloor01_color" + texFormatSuffix + ".ktx", texFormat, vulkanDevice, queue);
 		textures.floor.normalMap.loadFromFile(getAssetPath() + "textures/stonefloor01_normal" + texFormatSuffix + ".ktx", texFormat, vulkanDevice, queue);
-	}
-
-	void reBuildCommandBuffers()
-	{
-		if (!checkCommandBuffers())
-		{
-			destroyCommandBuffers();
-			createCommandBuffers();
-		}
-		buildCommandBuffers();
 	}
 
 	void buildCommandBuffers()
@@ -808,7 +798,7 @@ public:
 				setLayoutBindingsMRT.data(),
 				static_cast<uint32_t>(setLayoutBindingsMRT.size()));
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayoutMRT));
-		
+
 		pPipelineLayoutCreateInfo =
 			vks::initializers::pipelineLayoutCreateInfo(
 				&descriptorSetLayoutMRT,
@@ -1004,7 +994,7 @@ public:
 		pipelineCreateInfo.pDynamicState = &dynamicState;
 		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCreateInfo.pStages = shaderStages.data();
-		
+
 		// Final fullscreen composition pass pipeline
 		shaderStages[0] = loadShader(getAssetPath() + "shaders/deferred_inputattachments/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
 		shaderStages[1] = loadShader(getAssetPath() + "shaders/deferred_inputattachments/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1154,7 +1144,22 @@ public:
 
 	void draw()
 	{
+		/*typedef struct VkSubmitInfo {
+    VkStructureType                sType;
+    const void*                    pNext;
+    uint32_t                       waitSemaphoreCount;
+    const VkSemaphore*             pWaitSemaphores;
+    const VkPipelineStageFlags*    pWaitDstStageMask;
+    uint32_t                       commandBufferCount;
+    const VkCommandBuffer*         pCommandBuffers;
+    uint32_t                       signalSemaphoreCount;
+    const VkSemaphore*             pSignalSemaphores;
+} VkSubmitInfo;*/
 		VulkanExampleBase::prepareFrame();
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = &semaphores.presentComplete;
+		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.pSignalSemaphores = &semaphores.renderComplete;
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
@@ -1189,15 +1194,6 @@ public:
 		updateUniformBufferDeferredMatrices();
 	}
 
-	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
-	{
-		if (overlay->header("Settings")) {
-			if (overlay->checkBox("Display render targets", &debugDisplay)) {
-				buildCommandBuffers();
-				updateUniformBuffersScreen();
-			}
-		}
-	}
 };
 
 VULKAN_EXAMPLE_MAIN()
